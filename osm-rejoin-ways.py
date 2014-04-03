@@ -37,6 +37,8 @@ def add_start_end_columns(db_connection, table_name):
 
     cursor.execute("CREATE INDEX {table_name}__start_point ON {table_name} (start_x, start_y)".format(table_name=table_name))
     cursor.execute("CREATE INDEX {table_name}__end_point ON {table_name} (end_x, end_y)".format(table_name=table_name))
+
+    # Create index on fields we're searching on?
     db_connection.commit()
 
 def populate_start_end_columns(db_connection, table_name):
