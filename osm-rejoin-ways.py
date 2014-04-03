@@ -87,7 +87,6 @@ def join_up_based_on_tag_value(db_connection, table_name, tag, value, where_clau
 
                 else:
                     # WTF?
-                    import pdb; pdb.set_trace()
                     raise NotImplementedError("Impossible Code path ")
 
             break
