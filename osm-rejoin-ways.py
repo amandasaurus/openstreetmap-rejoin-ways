@@ -52,7 +52,7 @@ def join_up_based_on_tag_value(db_connection, table_name, tag, value, where_clau
     print "Merging {0}={1}".format(tag, value)
     with db_connection.cursor() as cursor:
         while True:
-            cursor.execute("select a.osm_id, b.osm_id from (select osm_id, {tag}, start_x, start_y, end_x, end_y from {table_name} WHERE {where_clause}) as a join (select osm_id, {tag}, start_x, start_y, end_x, end_y FROM planet_osm_line WHERE {where_clause}) as b ON ( (a.osm_id < b.osm_id) AND (a.{tag} = '{value}' and b.{tag} = '{value}') and ((a.start_x = b.end_x and a.start_y = b.end_y) OR (a.start_x = b.start_x and a.start_y = b.start_y)));".format(table_name=table_name, tag=tag, value=value, where_clause=where_clause))
+            cursor.execute("select a.osm_id, b.osm_id from (select osm_id, {tag}, start_x, start_y, end_x, end_y from {table_name} WHERE {where_clause}) as a join (select osm_id, {tag}, start_x, start_y, end_x, end_y FROM planet_osm_line WHERE {where_clause}) as b ON ( (a.osm_id < b.osm_id) AND (a.{tag} = %s and b.{tag} = %s) and ((a.start_x = b.end_x and a.start_y = b.end_y) OR (a.start_x = b.start_x and a.start_y = b.start_y)));".format(table_name=table_name, tag=tag, where_clause=where_clause), (value, value))
             connections = list(cursor)
 
             if len(connections) == 0:
@@ -73,16 +73,13 @@ def join_up_based_on_tag_value(db_connection, table_name, tag, value, where_clau
                     # one deleted?
                     pass
                 elif len(osm_ids) == 2:
-                    # delete #1 and update #2 geom
-                    #cursor.execute("""
-                    #    WITH output AS ( DELETE FROM {table_name} where osm_id = {osm_id_0} returning way )
-                    #        UPDATE {table_name} SET way = ST_MakeLine(way, output.way) WHERE osm_id = {osm_id_1} FROM output
-                    #""".format(table_name=table_name, osm_id_0=osm_ids[0][0], osm_id_1=osm_ids[1][0]))
+                    # update #2 geom
                     cursor.execute("""
                         UPDATE {table_name} SET way = ( SELECT ST_MakeLine(way) from {table_name} WHERE osm_id IN (%s, %s) ) WHERE osm_id = %s
                     """.format(table_name=table_name), (osm_ids[0][0], osm_ids[1][0], osm_ids[1][0]))
                     # Update end point of #2
                     cursor.execute("UPDATE {table_name} SET start_x = ST_X(ST_StartPoint(way)), start_y = ST_Y(ST_StartPoint(way)), end_x = ST_X(ST_EndPoint(way)), end_y = ST_Y(ST_EndPoint(way)) WHERE osm_id = %s".format(table_name=table_name), (osm_ids[1][0],))
+                    # delete #1
                     cursor.execute("DELETE FROM {table_name} where osm_id = %s".format(table_name=table_name), (osm_ids[0][0],))
                     print "Merged osm_ids {osm_id_0} into {osm_id_1}".format(osm_id_0=osm_ids[0][0], osm_id_1=osm_ids[1][0])
 
@@ -93,11 +90,6 @@ def join_up_based_on_tag_value(db_connection, table_name, tag, value, where_clau
 
             break
 
-                #cursor.execute("UPDATE planet_osm_line SET select a.osm_id, b.osm_id from {table_name} as a join planet_osm_line as b ON ( (a.osm_id < b.osm_id) AND (a.{tag} = '{value}' and b.{tag} = '{value}') and ((a.start_x = b.end_x and a.start_y = b.end_y) OR (a.start_x = b.start_x and a.start_y = b.start_y)));")
-
-
-
-    #select a.osm_id, b.osm_id from planet_osm_line as a join planet_osm_line as b ON ( (a.osm_id < b.osm_id) AND (a.ref = 'N59' and b.ref = 'N59') and ((a.start_x = b.end_x and a.start_y = b.end_y) OR (a.start_x = b.start_x and a.start_y = b.start_y)));
 
 def join_up_based_on_tag(db_connection, table_name, tag, where_clause):
     with db_connection.cursor() as cursor:
