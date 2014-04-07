@@ -50,18 +50,29 @@ def populate_start_end_columns(db_connection, table_name):
     db_connection.commit()
 
 
-def join_up_based_on_tag_value(db_connection, table_name, tag, value, where_clause):
-    print "Merging {0}={1}".format(tag, value)
+def create_index_on_tags(db_connection, table_name, tags):
+    with db_connection.cursor() as cursor:
+        for tag in tags:
+            cursor.execute("CREATE INDEX ON {table_name} ({tag});".format(table_name=table_name, tag=tag))
+
+def join_up_based_on_tag_value(db_connection, table_name, tag, value, where_clause, null_clause):
+    num_iterations = 0
+    max_iterations = 100
+
     with db_connection.cursor() as cursor:
         while True:
-            cursor.execute("select a.osm_id, b.osm_id from (select osm_id, {tag}, start_x, start_y, end_x, end_y from {table_name} WHERE {where_clause}) as a join (select osm_id, {tag}, start_x, start_y, end_x, end_y FROM planet_osm_line WHERE {where_clause}) as b ON ( (a.osm_id < b.osm_id) AND (a.{tag} = %s and b.{tag} = %s) and ((a.start_x = b.end_x and a.start_y = b.end_y) OR (a.start_x = b.start_x and a.start_y = b.start_y)));".format(table_name=table_name, tag=tag, where_clause=where_clause), (value, value))
+            if num_iterations > max_iterations:
+                break
+            num_iterations += 1
+
+            cursor.execute("select a.osm_id, b.osm_id from (select osm_id, {tag}, start_x, start_y, end_x, end_y from {table_name} WHERE {where_clause} {null_clause}) as a join (select osm_id, {tag}, start_x, start_y, end_x, end_y FROM {table_name} WHERE {where_clause} {null_clause}) as b ON ( (a.osm_id < b.osm_id) AND (a.{tag} = %s and b.{tag} = %s) and ((a.start_x = b.end_x and a.start_y = b.end_y) OR (a.start_x = b.start_x and a.start_y = b.start_y)));".format(table_name=table_name, tag=tag, where_clause=where_clause, null_clause=null_clause), (value, value))
             connections = list(cursor)
 
             if len(connections) == 0:
                 # Nothing to do here
                 break
 
-            print "There are {} connections".format(len(connections))
+            print "Merging {0}={1}, there are {2} connections, iteration = {3}".format(tag, value, len(connections)+1, num_iterations)
 
             for a_osm_id, b_osm_id in connections:
                 # ensure both are still there are can be joined (in case one
@@ -77,43 +88,52 @@ def join_up_based_on_tag_value(db_connection, table_name, tag, value, where_clau
                 elif len(osm_ids) == 2:
                     # update #2 geom
                     cursor.execute("""
-                        UPDATE {table_name} SET way = ( SELECT ST_MakeLine(way) from {table_name} WHERE osm_id IN (%s, %s) ) WHERE osm_id = %s
+                        UPDATE {table_name} SET way = ( SELECT ST_Union(way) from {table_name} WHERE osm_id IN (%s, %s) ) WHERE osm_id = %s
                     """.format(table_name=table_name), (osm_ids[0][0], osm_ids[1][0], osm_ids[1][0]))
                     # Update end point of #2
                     cursor.execute("UPDATE {table_name} SET start_x = ST_X(ST_StartPoint(way)), start_y = ST_Y(ST_StartPoint(way)), end_x = ST_X(ST_EndPoint(way)), end_y = ST_Y(ST_EndPoint(way)) WHERE osm_id = %s".format(table_name=table_name), (osm_ids[1][0],))
                     # delete #1
                     cursor.execute("DELETE FROM {table_name} where osm_id = %s".format(table_name=table_name), (osm_ids[0][0],))
-                    print "Merged osm_ids {osm_id_0} into {osm_id_1}".format(osm_id_0=osm_ids[0][0], osm_id_1=osm_ids[1][0])
+                    print "\tMerged osm_ids {osm_id_0} into {osm_id_1}".format(osm_id_0=osm_ids[0][0], osm_id_1=osm_ids[1][0])
 
                 else:
                     # WTF?
+                    print "WTF"
                     raise NotImplementedError("Impossible Code path ")
 
-            break
 
+def join_up_based_on_tag(db_connection, table_name, tag, where_clause, null_columns):
+    null_columns = null_columns or []
+    # TODO merge this into where_clause
+    if len(null_columns) == 0:
+        null_clause = ''
+    else:
+        null_clause = ' AND ' + " AND ".join(x+" IS NULL" for x in null_columns)
 
-def join_up_based_on_tag(db_connection, table_name, tag, where_clause):
     with db_connection.cursor() as cursor:
         cursor.execute("SELECT DISTINCT {tag} from {table_name} WHERE {tag} IS NOT NULL AND {where_clause}".format(tag=tag, table_name=table_name, where_clause=where_clause))
         distinct_tag_values = set(x[0] for x in cursor)
 
     for tag_value in distinct_tag_values:
-        join_up_based_on_tag_value(db_connection, table_name, tag, tag_value, where_clause)
+        join_up_based_on_tag_value(db_connection, table_name, tag, tag_value, where_clause, null_clause)
 
 
 
 def main(argv):
     args = parse_args(argv)
+    tags = [t.strip() for t in args.tags.split(",")]
     db_connection = connect_to_database(args)
     table_name = args.prefix + "_line"
     add_start_end_columns(db_connection, table_name)
     populate_start_end_columns(db_connection, table_name)
+    create_index_on_tags(db_connection, table_name, tags)
 
     where_clause = args.where or '1 = 1'
 
-    for tag in args.tags.split(","):
-        tag = tag.strip()
-        join_up_based_on_tag(db_connection, table_name, tag, where_clause)
+    already_examined_tags = []
+    for tag in tags:
+        join_up_based_on_tag(db_connection, table_name, tag, where_clause, null_columns=already_examined_tags)
+        already_examined_tags.append(tag)
 
 
 
