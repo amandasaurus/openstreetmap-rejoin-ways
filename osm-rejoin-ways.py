@@ -59,11 +59,11 @@ def join_up_based_on_tag_value(db_connection, table_name, tag, value, where_clau
     num_iterations = 0
     max_iterations = 100
 
-    with db_connection.cursor() as cursor:
-        while True:
-            if num_iterations > max_iterations:
-                break
-            num_iterations += 1
+    while True:
+        if num_iterations > max_iterations:
+            break
+        num_iterations += 1
+        with db_connection.cursor() as cursor:
 
             cursor.execute("select a.osm_id, b.osm_id from (select osm_id, {tag}, start_x, start_y, end_x, end_y from {table_name} WHERE {where_clause} {null_clause}) as a join (select osm_id, {tag}, start_x, start_y, end_x, end_y FROM {table_name} WHERE {where_clause} {null_clause}) as b ON ( (a.osm_id < b.osm_id) AND (a.{tag} = %s and b.{tag} = %s) and ((a.start_x = b.end_x and a.start_y = b.end_y) OR (a.start_x = b.start_x and a.start_y = b.start_y)));".format(table_name=table_name, tag=tag, where_clause=where_clause, null_clause=null_clause), (value, value))
             connections = list(cursor)
@@ -100,6 +100,7 @@ def join_up_based_on_tag_value(db_connection, table_name, tag, value, where_clau
                     # WTF?
                     print "WTF"
                     raise NotImplementedError("Impossible Code path ")
+            db_connection.commit()
 
 
 def join_up_based_on_tag(db_connection, table_name, tag, where_clause, null_columns):
