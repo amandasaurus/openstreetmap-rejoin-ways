@@ -2,6 +2,7 @@ import argparse
 import psycopg2
 import sys
 
+
 def parse_args(argv):
     parser = argparse.ArgumentParser(description='')
     # Postgres connection details
@@ -9,13 +10,13 @@ def parse_args(argv):
     #parser.add_argument("-u", "--username")
     #parser.add_argument("-H", "--hostname")
     #parser.add_argument("-p", "--password")
-    parser.add_argument("-d", "--database", default="gis", help="PostgreSQL database")
+    parser.add_argument("-d", "--database", default="gis", help="PostGIS database")
 
     # where you data is
-    parser.add_argument("--prefix", default="planet_osm", help="Table prefix")
-    parser.add_argument("-t", "--tags", default="ref,name,highway", help="tags to merge ways on")
+    parser.add_argument("--table", default="planet_osm_line", help="Table to work on (default: planet_osm_line)")
+    parser.add_argument("-t", "--tags", default="ref,name,highway", help="Comma separated list of tags to merge ways on, in order (default: ref,name,highway)")
 
-    parser.add_argument("-w", "--where" default="highway IS NOT NULL", help="Only rows that match this SQL WHERE query are worked on")
+    parser.add_argument("-w", "--where", default="highway IS NOT NULL", help="Only rows that match this SQL WHERE query are worked on (default: \"highway IS NOT NULL\")")
 
     args = parser.parse_args(argv)
 
@@ -23,39 +24,16 @@ def parse_args(argv):
 
 
 def connect_to_database(args):
+    """Returns a psycopg2 connection for this arguments"""
     # TODO support usernames etc
     return psycopg2.connect("dbname=" + args.database)
-
-
-def add_start_end_columns(db_connection, table_name):
-    cursor = db_connection.cursor()
-    cursor.execute("SELECT 1 FROM information_schema.columns WHERE table_name=%s and column_name=%s LIMIT 1", (table_name, 'start_x'))
-    if len(list(cursor)) != 0:
-        return
-
-    for column in ['start_x', 'start_y', 'end_x', 'end_y']:
-        # add column
-        cursor.execute("ALTER TABLE {table_name} ADD COLUMN {column} float".format(table_name=table_name, column=column))
-
-    cursor.execute("CREATE INDEX {table_name}__start_point ON {table_name} (start_x, start_y)".format(table_name=table_name))
-    cursor.execute("CREATE INDEX {table_name}__end_point ON {table_name} (end_x, end_y)".format(table_name=table_name))
-
-    # Create index on fields we're searching on?
-    db_connection.commit()
-
-def populate_start_end_columns(db_connection, table_name):
-    cursor = db_connection.cursor()
-    # Only update rows we need to, i.e. where start_x has not been set.
-    # We presume if start_x is non-null then all the other columns are non-null
-    # too.
-    cursor.execute("UPDATE {table_name} SET start_x = ST_X(ST_StartPoint(way)), start_y = ST_Y(ST_StartPoint(way)), end_x = ST_X(ST_EndPoint(way)), end_y = ST_Y(ST_EndPoint(way)) WHERE start_x IS NULL".format(table_name=table_name))
-    db_connection.commit()
 
 
 def create_index_on_tags(db_connection, table_name, tags):
     with db_connection.cursor() as cursor:
         for tag in tags:
             cursor.execute("CREATE INDEX ON {table_name} ({tag});".format(table_name=table_name, tag=tag))
+
 
 def join_up_based_on_tag_value(db_connection, table_name, tag, value, where_clause, null_clause):
     num_iterations = 0
@@ -118,14 +96,11 @@ def join_up_based_on_tag(db_connection, table_name, tag, where_clause, null_colu
         join_up_based_on_tag_value(db_connection, table_name, tag, tag_value, where_clause, null_clause)
 
 
-
 def main(argv):
     args = parse_args(argv)
     tags = [t.strip() for t in args.tags.split(",")]
     db_connection = connect_to_database(args)
-    table_name = args.prefix + "_line"
-    add_start_end_columns(db_connection, table_name)
-    populate_start_end_columns(db_connection, table_name)
+    table_name = args.table
     create_index_on_tags(db_connection, table_name, tags)
 
     where_clause = args.where or '1 = 1'
@@ -134,7 +109,6 @@ def main(argv):
     for tag in tags:
         join_up_based_on_tag(db_connection, table_name, tag, where_clause, null_columns=already_examined_tags)
         already_examined_tags.append(tag)
-
 
 
 if __name__ == '__main__':
